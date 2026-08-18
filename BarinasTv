@@ -2,97 +2,185 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Transmisión en Vivo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reproductor Live Pro</title>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
+    :root {
+      --primary-color: #ff0000;
+      --bg-color: #0f0f0f;
+    }
     body {
-      background-color: #f4f4f4;
+      background-color: var(--bg-color);
+      color: white;
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
       margin: 0;
-      font-family: sans-serif;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     .video-container {
-      max-width: 800px;
-      width: 100%;
+      max-width: 900px;
+      width: 95%;
       background: #000;
-      border-radius: 8px;
+      border-radius: 12px;
       overflow: hidden;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
       position: relative;
+      border: 1px solid #333;
     }
     video {
       width: 100%;
+      aspect-ratio: 16 / 9;
       display: block;
+      cursor: pointer;
+    }
+    .status-bar {
+      padding: 10px 20px;
+      background: #1a1a1a;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+    }
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-transform: uppercase;
+      font-weight: bold;
+      color: var(--primary-color);
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      background-color: var(--primary-color);
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.4; }
+      100% { opacity: 1; }
     }
     #error-msg {
       display: none;
       position: absolute;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.85);
-      color: #fff;
+      background: rgba(0,0,0,0.9);
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
       text-align: center;
+      z-index: 10;
       padding: 20px;
-      box-sizing: border-box;
     }
+    button {
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+    button:hover { background: #cc0000; }
   </style>
 </head>
 <body>
 
   <div class="video-container">
-    <video id="videoLive" controls autoplay muted playsinline></video>
     <div id="error-msg">
-      <h3>⚠️ Error de transmisión</h3>
-      <p>No se pudo conectar con el servidor origen o el navegador bloqueó la petición local.</p>
-      <p><small>Asegúrate de ejecutar esta página con Live Server o desde un servidor web local.</small></p>
+      <h3>⚠️ Error de conexión</h3>
+      <p id="error-text">La transmisión se ha interrumpido.</p>
+      <button onclick="location.reload()">REINTENTAR CONEXIÓN</button>
+    </div>
+    
+    <video id="videoLive" controls playsinline></video>
+    
+    <div class="status-bar">
+      <div class="live-indicator">
+        <div class="dot"></div> EN VIVO
+      </div>
+      <div id="stream-info">Cargando señal...</div>
     </div>
   </div>
 
   <script>
     const video = document.getElementById('videoLive');
     const errorMsg = document.getElementById('error-msg');
+    const errorText = document.getElementById('error-text');
     const streamUrl = 'https://live20.bozztv.com/giatv/giatv-barinastv1234/barinastv1234/chunks.m3u8';
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        enableWorker: true,
-        lowLatencyMode: false
-      });
+    // Configuración avanzada para evitar que se detenga
+    const hlsConfig = {
+      maxBufferLength: 30,        // Máximo de segundos en buffer
+      maxMaxBufferLength: 60,
+      enableWorker: true,
+      lowLatencyMode: true,       // Activar baja latencia
+      backBufferLength: 90,
+      manifestLoadingMaxRetry: 10,
+      manifestLoadingRetryDelay: 1000,
+      fragLoadingMaxRetry: 10,
+      fragLoadingRetryDelay: 1000,
+      // Esto ayuda a saltar huecos en el stream que suelen congelar el video
+      maxBufferHole: 0.5,
+      highBufferWatchdogPeriod: 2,
+      nudgeOffset: 0.1,
+      nudgeMaxRetries: 10
+    };
 
+    if (Hls.isSupported()) {
+      const hls = new Hls(hlsConfig);
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        video.play().catch(e => console.log("Autoplay bloqueado:", e));
+        // Muted para asegurar el autoplay en navegadores modernos
+        video.muted = true;
+        video.play().catch(err => {
+          console.log("Autoplay bloqueado, requiere interacción.");
+        });
       });
 
+      // Manejo de errores crítico
       hls.on(Hls.Events.ERROR, function(event, data) {
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              console.log("Error de red, reintentando...");
+              console.error("Error de red fatal - Intentando recuperar...");
               hls.startLoad();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
+              console.error("Error de medios fatal - Intentando recuperar...");
               hls.recoverMediaError();
               break;
             default:
+              console.error("Error irrecuperable");
               hls.destroy();
-              errorMsg.style.display = 'block';
+              showError("No se puede conectar con el servidor de streaming.");
               break;
           }
         }
       });
-    } 
-    else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = streamUrl;
-      video.addEventListener('loadedmetadata', function() {
-        video.play();
+
+      // Detectar si el video se queda congelado (Stall)
+      video.addEventListener('waiting', () => {
+        console.log("Buffer vacío, esperando datos...");
       });
+
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Soporte nativo para Safari (iOS/Mac)
+      video.src = streamUrl;
+      video.addEventListener('loadedmetadata', () => video.play());
+    }
+
+    function showError(msg) {
+      errorText.innerText = msg;
+      errorMsg.style.display = 'flex';
     }
   </script>
 
