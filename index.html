@@ -3,113 +3,112 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Barinas TV - Señal en Vivo</title>
+  <title>Barinas TV - Live Pro</title>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
-    :root { --red: #ff0000; --dark: #0a0a0a; }
-    body { background: var(--dark); color: white; margin: 0; font-family: 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
-    .main-container { width: 100%; max-width: 1000px; padding: 10px; }
-    .video-wrapper { position: relative; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.9); border: 1px solid #222; }
-    video { width: 100%; aspect-ratio: 16/9; display: block; }
-    .live-bar { background: #151515; padding: 15px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #333; }
-    .live-tag { display: flex; align-items: center; gap: 8px; color: var(--red); font-weight: bold; font-size: 13px; letter-spacing: 1px; }
-    .pulse-dot { width: 8px; height: 8px; background: var(--red); border-radius: 50%; animation: pulse 1.2s infinite; }
-    @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.4; } 100% { transform: scale(1); opacity: 1; } }
-    #status-info { font-size: 12px; color: #666; }
-    /* Ocultar barra de progreso que confunde en vivos */
-    video::-webkit-media-controls-timeline { display: none !important; }
-    video::-webkit-media-controls-current-time-display { display: none !important; }
-    video::-webkit-media-controls-time-remaining-display { display: none !important; }
+    body { background: #000; color: white; margin: 0; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+    #player-container { width: 100%; max-width: 960px; aspect-ratio: 16/9; position: relative; background: #000; box-shadow: 0 0 50px rgba(0,0,0,1); }
+    video { width: 100%; height: 100%; display: block; object-fit: contain; }
+    .status-bar { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.7); padding: 10px; display: flex; justify-content: space-between; box-sizing: border-box; font-size: 12px; }
+    .live-tag { color: #ff0000; font-weight: bold; display: flex; align-items: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; background: #ff0000; border-radius: 50%; animation: blink 1s infinite; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+    #msg { color: #aaa; }
   </style>
 </head>
 <body>
 
-<div class="main-container">
-  <div class="video-wrapper">
-    <video id="video" controls autoplay muted playsinline></video>
-    <div class="live-bar">
-      <div class="live-tag"><div class="pulse-dot"></div> EN VIVO</div>
-      <div id="status-info">Iniciando flujo de datos...</div>
-    </div>
+<div id="player-container">
+  <video id="video" autoplay muted playsinline controls></video>
+  <div class="status-bar">
+    <div class="live-tag"><div class="dot"></div> EN VIVO</div>
+    <div id="msg">Sincronizando señal...</div>
   </div>
 </div>
 
 <script>
   const video = document.getElementById('video');
-  const status = document.getElementById('status-info');
+  const msg = document.getElementById('msg');
   const streamUrl = 'https://live20.bozztv.com/giatv/giatv-barinastv1234/barinastv1234/chunks.m3u8';
+  
+  let hls = null;
+  let lastTime = -1;
+  let stallCounter = 0;
 
-  let hls;
-
-  function startStream() {
-    if (hls) { hls.destroy(); }
+  function loadPlayer() {
+    if (hls) {
+      hls.destroy();
+      console.log("Reiniciando flujo por congelamiento...");
+    }
 
     if (Hls.isSupported()) {
       hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
+        backBufferLength: 0,
         manifestLoadingMaxRetry: Infinity,
         manifestLoadingRetryDelay: 500,
-        // Forzar al reproductor a pensar que el video nunca termina
-        liveDurationInfinite: true,
-        liveSyncDurationCount: 3,
-        levelLoadingMaxRetry: 20,
-        // Ignorar errores de segmentos faltantes para que no se detenga
-        ignoreDevicePixelRatio: true
+        fragLoadingMaxRetry: Infinity,
+        fragLoadingRetryDelay: 500,
+        liveSyncDurationCount: 2, // Empezar muy cerca del "ahora"
+        liveMaxLatencyDurationCount: 5,
+        maxBufferLength: 6
       });
 
-      // Engañamos al sistema para que siempre pida la versión más nueva
+      // El '?v=' engaña al servidor para que no nos de video viejo (cache)
       hls.loadSource(streamUrl + '?nocache=' + Date.now());
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => console.log("Play manual requerido"));
-        status.innerText = "Conexión Estable";
+        video.play().catch(() => {});
+        msg.innerText = "Señal en línea";
       });
 
-      // Si el servidor envía un "fin de lista", nosotros lo ignoramos y reiniciamos
       hls.on(Hls.Events.ERROR, (event, data) => {
         if (data.fatal) {
-          console.log("Error crítico, recuperando...");
-          startStream(); 
+          loadPlayer(); // Reinicio instantáneo ante error fatal
         }
       });
-
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = streamUrl;
     }
   }
 
-  // MONITOR DE CONGELAMIENTO (Watchdog)
-  // Si el video se queda pegado más de 3 segundos o llega al final del buffer, salta al "ahora"
-  let lastPos = 0;
-  let stuckCount = 0;
-
+  // MOTOR DE VIGILANCIA (Watchdog)
+  // Revisa cada segundo si el video se movió. Si no, lo arregla.
   setInterval(() => {
     if (video.paused) return;
 
-    if (video.currentTime === lastPos) {
-      stuckCount++;
-      if (stuckCount > 3) {
-        console.log("Congelamiento detectado. Forzando recarga...");
-        status.innerText = "Resincronizando señal...";
-        startStream(); // Reinicio total si se congela
-        stuckCount = 0;
+    if (video.currentTime === lastTime) {
+      stallCounter++;
+      msg.innerText = "Recuperando señal... (" + stallCounter + "s)";
+      
+      // Si el video lleva 3 segundos pegado, forzamos un salto al futuro
+      if (stallCounter >= 3) {
+        if (video.buffered.length > 0) {
+          video.currentTime = video.buffered.end(video.buffered.length - 1) - 0.1;
+        }
+      }
+
+      // Si lleva 6 segundos pegado, reiniciamos el motor HLS por completo
+      if (stallCounter >= 6) {
+        stallCounter = 0;
+        loadPlayer();
       }
     } else {
-      stuckCount = 0;
-      status.innerText = "Transmisión en línea";
+      stallCounter = 0;
+      msg.innerText = "Transmisión Estable";
     }
-    lastPos = video.currentTime;
+    lastTime = video.currentTime;
+  }, 1000);
 
-    // Si falta poco para llegar al supuesto "final" del video (que no es real)
-    if (video.duration - video.currentTime < 5) {
-        startStream(); // Recargamos antes de que llegue al final
-    }
-  }, 2000);
+  // Iniciar por primera vez
+  loadPlayer();
 
-  startStream();
+  // Activar sonido al primer clic (regla de navegadores)
+  document.addEventListener('click', () => {
+    video.muted = false;
+    msg.innerText = "Audio activado";
+  }, { once: true });
+
 </script>
-
 </body>
 </html>
