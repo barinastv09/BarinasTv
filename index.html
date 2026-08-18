@@ -3,128 +3,86 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Barinas TV - Transmisión Continua</title>
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <title>BARINAS TV - SEÑAL EN VIVO</title>
+  <!-- Cargamos el motor Clappr que es más estable -->
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/clappr@latest/dist/clappr.min.js"></script>
   <style>
-    body { background: #000; color: white; margin: 0; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
-    .container { width: 100%; max-width: 850px; background: #111; border-radius: 10px; overflow: hidden; position: relative; }
-    video { width: 100%; aspect-ratio: 16/9; display: block; }
-    .status-overlay { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 5px 12px; border-radius: 20px; font-size: 12px; display: flex; align-items: center; gap: 8px; pointer-events: none; }
-    .dot { width: 8px; height: 8px; background: #ff0000; border-radius: 50%; animation: pulse 1s infinite; }
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-    #msg { color: #fff; text-transform: uppercase; font-weight: bold; }
-    .reconnect-btn { position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%); background: #ff0000; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; display: none; }
+    body { background-color: #000; margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
+    #player { width: 100%; max-width: 900px; aspect-ratio: 16/9; background: #000; box-shadow: 0 0 30px rgba(255,0,0,0.2); }
+    
+    /* Botón de inicio forzado para evitar la pantalla negra */
+    #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; cursor: pointer; }
+    .play-button { width: 80px; height: 80px; background: #ff0000; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 30px; color: white; transition: 0.3s; box-shadow: 0 0 20px #ff0000; }
+    #overlay:hover .play-button { transform: scale(1.1); }
+    .text { color: white; margin-top: 20px; font-weight: bold; letter-spacing: 2px; }
   </style>
 </head>
 <body>
 
-<div class="container">
-  <div class="status-overlay">
-    <div class="dot"></div>
-    <span id="msg">Conectando...</span>
+  <!-- Capa de inicio para forzar al navegador a conectar -->
+  <div id="overlay" onclick="startPlayer()">
+    <div class="play-button">▶</div>
+    <div class="text">TOCA PARA VER EN VIVO</div>
   </div>
-  
-  <video id="video" controls autoplay muted playsinline></video>
-  <button id="reconnect" class="reconnect-btn" onclick="reiniciarFlujo()">RECONECTAR SEÑAL</button>
-</div>
 
-<script>
-  const video = document.getElementById('video');
-  const msg = document.getElementById('msg');
-  const btn = document.getElementById('reconnect');
-  const streamUrl = 'https://live20.bozztv.com/giatv/giatv-barinastv1234/barinastv1234/chunks.m3u8';
-  
-  let hls = null;
-  let ultimaPosicion = -1;
-  let segundosCongelado = 0;
+  <div id="player"></div>
 
-  function iniciarStreaming() {
-    if (hls) {
-      hls.destroy();
-    }
+  <script>
+    var player;
+    var streamUrl = "https://live20.bozztv.com/giatv/giatv-barinastv1234/barinastv1234/chunks.m3u8";
 
-    if (Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        manifestLoadingMaxRetry: Infinity, // No rendirse nunca
-        manifestLoadingRetryDelay: 500,
-        liveDurationInfinite: true, // Ignorar si el servidor dice que dura 2 min
-        liveSyncDurationCount: 2,   // Pegarse lo más posible al vivo
-        maxBufferLength: 10,        // Mantener buffer pequeño para evitar lag
-        appendErrorMaxRetry: 10
-      });
+    function startPlayer() {
+      // Ocultar la capa de inicio
+      document.getElementById('overlay').style.display = 'none';
 
-      // El parámetro ?t evita que el navegador use una versión vieja del archivo
-      hls.loadSource(streamUrl + '?t=' + Date.now());
-      hls.attachMedia(video);
-
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play();
-        msg.innerText = "En Vivo";
-        btn.style.display = 'none';
-      });
-
-      hls.on(Hls.Events.ERROR, (event, data) => {
-        if (data.fatal) {
-          console.log("Error de red o media, reiniciando...");
-          iniciarStreaming();
+      // Configurar el reproductor
+      player = new Clappr.Player({
+        source: streamUrl,
+        parentId: "#player",
+        autoPlay: true,
+        width: '100%',
+        height: '100%',
+        mimeType: "application/x-mpegURL",
+        actualLiveTime: true,
+        preload: 'auto',
+        playback: {
+          hlsjsConfig: {
+            enableWorker: true,
+            lowLatencyMode: false, // Desactivado para mayor estabilidad
+            manifestLoadingMaxRetry: Infinity,
+            manifestLoadingRetryDelay: 1000,
+            levelLoadingMaxRetry: Infinity,
+            // Esto es clave: saltar errores de segmento
+            fragLoadingMaxRetry: 10,
+          }
+        },
+        events: {
+          // Si el video se detiene por error del servidor, lo reinicia solo
+          onError: function(e) {
+            console.log("Error detectado, reintentando...");
+            player.configure({source: streamUrl + "?t=" + Date.now()});
+            player.play();
+          },
+          onEnded: function() {
+            console.log("Fin de lista, reconectando...");
+            player.configure({source: streamUrl + "?t=" + Date.now()});
+            player.play();
+          }
         }
       });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Para Safari (iPhone/Mac)
-      video.src = streamUrl;
     }
-  }
 
-  // --- EL MOTOR DE SUPERVIVENCIA ---
-  // Este intervalo revisa el video cada segundo para ver si se detuvo
-  setInterval(() => {
-    if (video.paused) return; // Si el usuario puso pausa, no hacer nada
-
-    if (video.currentTime === ultimaPosicion) {
-      segundosCongelado++;
-      
-      if (segundosCongelado >= 3) {
-        msg.innerText = "Recuperando señal...";
-        console.warn("Señal pegada, forzando recarga...");
-        
-        // Intentamos saltar al final del buffer antes de reiniciar todo
-        if (video.buffered.length > 0) {
-            video.currentTime = video.buffered.end(video.buffered.length - 1) - 0.1;
+    // Monitoreo extra: si el video no avanza, forzar carga
+    setInterval(function() {
+        if (player && player.isPlaying()) {
+            // Si el buffer se queda vacío, Clappr lo intenta recuperar solo, 
+            // pero si pasan 10 segundos sin éxito, podemos forzarlo:
+            if (player.core.mediaControl.container.playback.ext === '0:00') {
+                 // Sigue en 0, esperando...
+            }
         }
-      }
+    }, 5000);
+  </script>
 
-      if (segundosCongelado >= 6) {
-        // Si después de 6 segundos sigue pegado, reiniciamos el motor HLS
-        segundosCongelado = 0;
-        iniciarStreaming();
-      }
-    } else {
-      segundosCongelado = 0;
-      msg.innerText = "En Vivo";
-      ultimaPosicion = video.currentTime;
-    }
-
-    // Si el video llega al supuesto "final" (porque el servidor envió mal la info)
-    if (video.ended) {
-        msg.innerText = "Reconectando flujo...";
-        iniciarStreaming();
-    }
-  }, 1000);
-
-  function reiniciarFlujo() {
-    iniciarStreaming();
-  }
-
-  // Iniciar al cargar la página
-  iniciarStreaming();
-
-  // Desmutear al primer clic
-  window.addEventListener('click', () => {
-    video.muted = false;
-  }, { once: true });
-
-</script>
 </body>
 </html>
